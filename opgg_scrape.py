@@ -10,3 +10,4 @@ headers = {
 
 multi_url = "https://www.op.gg/multisearch/na?summoners=lisk%23lisk%2C%20petroleum%20jelly%23NA1"
 acc_url1 = "https://www.op.gg/summoners/na/Lisk-Lisk"
+
