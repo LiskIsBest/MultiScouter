@@ -11,6 +11,9 @@ def op_to_names(url:str)->list[str]:
     names = [i for i in names if i != '']
     return names
 
+class UserNotFoundError(ValueError):
+    ...
+
 class PlayerData:
     def __init__(self, riot_id: str, http_client: httpx.Client) -> None:
         self.client = http_client
@@ -36,6 +39,8 @@ class PlayerData:
             f'https://www.op.gg/_next/data/{build_id}/en_US/summoners/na/{riot_id}/champions.json?region=na&summoner={riot_id}'
             )
         content_json = json.loads(res.content)
+        if content_json['pageProps']['error']:
+            raise UserNotFoundError
         summoner_id = content_json['pageProps']['data']['summoner_id']
         return summoner_id
     
