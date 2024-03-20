@@ -6,9 +6,9 @@ import pandas as pd
 
 
 def op_to_names(url:str)->list[str]:
-    names = url.split('=')[1].split(',')
-    names = list(map(lambda i: unquote(i).strip(','), names))
-    return names
+    names = url.split('=')[1]
+    names = unquote(names)
+    return names.split(',')
 
 class PlayerData:
     def __init__(self, riot_id: str) -> None:
@@ -86,13 +86,23 @@ class PlayerData:
         return f'https://www.op.gg/summoners/na/{riot_id}'
     
     def __champion_ranked_data(self, res:httpx.Response)->httpx.Response:
+        data = json.loads(res.content)['data']
+        if data == []:
+            empty = {
+                "champ_name":"none",
+                "played":"none",
+                "win_rate":"none",
+                "kda":"none",
+                "cspm":"none"
+            }
+            return pd.DataFrame(empty, index=[0])
         data = json.loads(res.content)['data']['champion_stats']
         champ_data = []
         for champ in data:
             stats = {
                 "champ_name":champ_ids[str(champ['id'])],
-                "play": champ['play'],
-                "win": champ['win'],
+                "played": champ['play'],
+                "win": champ['win'], 
                 "lose": champ['lose'],
                 "kill": champ['kill'],
                 "death": champ['death'],
@@ -101,8 +111,9 @@ class PlayerData:
                 "neutral_minion_kill":champ['neutral_minion_kill'],
                 "game_length_seconds":champ['game_length_second']
             }
-            stats['win_rate'] = (stats['win'] / stats['play'])*100
+            stats['win_rate'] = (stats['win'] / stats['played'])*100
             stats['cspm'] = (stats['minion_kills']+stats['neutral_minion_kill']) / (stats['game_length_seconds']/60)
+            stats['kda'] = (stats['kill'] + stats['assist'])/(1 if stats['death'] == 0 else stats['death'])
             champ_data.append(stats)
         champ_data = pd.DataFrame.from_dict(champ_data[:10])
         return champ_data
