@@ -8,14 +8,9 @@ show = 10
 
 def op_to_names(url:str)->list[str]:
     names = url.split('=')[1]
-<<<<<<< HEAD
-    names = unquote(names)
-    return names.split(',')
-=======
     names = unquote(names).split(',')
     names = [i for i in names if i != '']
     return names
->>>>>>> c7b7f89735231eb038a73a9d65aaeb49bcd73de2
 
 class UserNotFoundError(ValueError):
     ...
@@ -111,16 +106,6 @@ class PlayerData:
         data = json.loads(res.content)['data']
         if data == []:
             empty = {
-<<<<<<< HEAD
-                "champ_name":"none",
-                "played":"none",
-                "win_rate":"none",
-                "kda":"none",
-                "cspm":"none"
-            }
-            return pd.DataFrame(empty, index=[0])
-        data = json.loads(res.content)['data']['champion_stats']
-=======
                 "champ_name":"None",
                 "played":"None",
                 "win_rate":"None",
@@ -129,17 +114,12 @@ class PlayerData:
             }
             return pd.DataFrame(empty,index=[0])
         data = data['champion_stats']
->>>>>>> c7b7f89735231eb038a73a9d65aaeb49bcd73de2
         champ_data = []
         for champ in data:
             stats = {
                 "champ_name":champ_ids[str(champ['id'])],
                 "played": champ['play'],
-<<<<<<< HEAD
-                "win": champ['win'], 
-=======
                 "win": champ['win'],
->>>>>>> c7b7f89735231eb038a73a9d65aaeb49bcd73de2
                 "lose": champ['lose'],
                 "kill": champ['kill'],
                 "death": champ['death'],
@@ -148,15 +128,9 @@ class PlayerData:
                 "neutral_minion_kill":champ['neutral_minion_kill'],
                 "game_length_seconds":champ['game_length_second']
             }
-<<<<<<< HEAD
-            stats['win_rate'] = (stats['win'] / stats['played'])*100
-            stats['cspm'] = (stats['minion_kills']+stats['neutral_minion_kill']) / (stats['game_length_seconds']/60)
-            stats['kda'] = (stats['kill'] + stats['assist'])/(1 if stats['death'] == 0 else stats['death'])
-=======
             stats['win_rate'] = round((stats['win'] / stats['played'])*100)
             stats['kda'] = round((stats['kill']+stats['assist']) / (1 if stats['death'] == 0 else stats['death']),2)
             stats['cspm'] = round((stats['minion_kills']+stats['neutral_minion_kill']) / (stats['game_length_seconds']/60),1)
->>>>>>> c7b7f89735231eb038a73a9d65aaeb49bcd73de2
             champ_data.append(stats)
         champ_data = pd.DataFrame.from_dict(champ_data[:show])
         return champ_data
