@@ -4,6 +4,7 @@ from bs4 import BeautifulSoup
 from urllib.parse import unquote
 import pandas as pd
 
+show = 10
 
 def op_to_names(url:str)->list[str]:
     names = url.split('=')[1]
@@ -87,7 +88,7 @@ class PlayerData:
                     'level' : level,
                     'points' : points
                 })
-        return pd.DataFrame.from_dict(champ_list[:10])
+        return pd.DataFrame.from_dict(champ_list[:show])
     
     def find_most_played_role(self, riot_id: str):
         name, tag = riot_id.split('#')
@@ -131,7 +132,7 @@ class PlayerData:
             stats['kda'] = round((stats['kill']+stats['assist']) / (1 if stats['death'] == 0 else stats['death']),2)
             stats['cspm'] = round((stats['minion_kills']+stats['neutral_minion_kill']) / (stats['game_length_seconds']/60),1)
             champ_data.append(stats)
-        champ_data = pd.DataFrame.from_dict(champ_data[:10])
+        champ_data = pd.DataFrame.from_dict(champ_data[:show])
         return champ_data
 
 champ_ids = {
