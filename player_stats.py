@@ -6,15 +6,18 @@ import pandas as pd
 
 
 def op_to_names(url:str)->list[str]:
-    names = url.split('=')[1].split(',')
-    names = list(map(lambda i: unquote(i).strip(','), names))
+    names = url.split('=')[1]
+    names = unquote(names).split(',')
+    names = [i for i in names if i != '']
     return names
 
 class PlayerData:
-    def __init__(self, riot_id: str) -> None:
+    def __init__(self, riot_id: str, http_client: httpx.Client) -> None:
+        self.client = http_client
         self.__build_id = self.get_build_id()
         self.__summoner_id = self.get_summoner_id(build_id=self.__build_id, riot_id=riot_id)
         self.rank_stats = self.player_rank_info(riot_id=riot_id)
+        self.most_played_role = self.find_most_played_role(riot_id=riot_id)
         self.solo_champs = self.solo_champ_pool(summoner_id=self.__summoner_id)
         self.flex_champs = self.flex_champ_pool(summoner_id=self.__summoner_id)
         self.champion_mastery = self.champion_masteries(riot_id=riot_id)
@@ -22,14 +25,14 @@ class PlayerData:
 
     def get_build_id(self):
         url = 'https://www.op.gg/summoners/na/Lisk-Lisk'
-        res = httpx.get(url)
+        res = self.client.get(url)
         soup = BeautifulSoup(res,'lxml')
         script_text = soup.find('script', id='__NEXT_DATA__').text
         return json.loads(script_text)['buildId']
         
     def get_summoner_id(self, build_id: str, riot_id: str)->str:
         riot_id = riot_id.replace('#','-')
-        res = httpx.get(
+        res = self.client.get(
             f'https://www.op.gg/_next/data/{build_id}/en_US/summoners/na/{riot_id}/champions.json?region=na&summoner={riot_id}'
             )
         content_json = json.loads(res.content)
@@ -37,22 +40,22 @@ class PlayerData:
         return summoner_id
     
     def solo_champ_pool(self, summoner_id: str):
-        res = httpx.get(f'https://lol-web-api.op.gg/api/v1.0/internal/bypass/summoners/na/{summoner_id}/most-champions/rank?game_type=SOLORANKED&season_id=25')
+        res = self.client.get(f'https://lol-web-api.op.gg/api/v1.0/internal/bypass/summoners/na/{summoner_id}/most-champions/rank?game_type=SOLORANKED&season_id=25')
         return self.__champion_ranked_data(res)
     
     def flex_champ_pool(self, summoner_id:str):
-        res = httpx.get(f'https://lol-web-api.op.gg/api/v1.0/internal/bypass/summoners/na/{summoner_id}/most-champions/rank?game_type=FLEXRANKED&season_id=25')
+        res = self.client.get(f'https://lol-web-api.op.gg/api/v1.0/internal/bypass/summoners/na/{summoner_id}/most-champions/rank?game_type=FLEXRANKED&season_id=25')
         return self.__champion_ranked_data(res)
         
     def player_rank_info(self, riot_id:str):
         riot_id = riot_id.replace('#','-')
-        res = httpx.get(f'https://www.op.gg/summoners/na/{riot_id}')
+        res = self.client.get(f'https://www.op.gg/summoners/na/{riot_id}')
         soup = BeautifulSoup(res,'lxml')
         rank = soup.find('div', class_='tier').text
         lp = soup.find('div', class_='lp').text.split(' ')[0]
         wins,losses = soup.find('div', class_='win-lose').text.replace('W','').replace('L','').split(' ')
         total_games = int(wins) + int(losses)
-        win_rate = soup.find('div', class_='ratio').text.split(' ')[2].strip('%')
+        win_rate = round(float(soup.find('div', class_='ratio').text.split(' ')[2].strip('%')),1)
         rank_stats = {
             'rank':rank,
             'lp':lp,
@@ -63,7 +66,7 @@ class PlayerData:
     
     def champion_masteries(self, riot_id: str):
         riot_id = riot_id.replace('#', '%23').replace('-','%23')
-        res = httpx.get(f'https://championmastery.gg/player?riotId={riot_id}&region=NA&lang=en_US')
+        res = self.client.get(f'https://championmastery.gg/player?riotId={riot_id}&region=NA&lang=en_US')
         soup = BeautifulSoup(res,'lxml')
         table = soup.find('table', class_='well')
         champ_list = []
@@ -81,17 +84,35 @@ class PlayerData:
                 })
         return pd.DataFrame.from_dict(champ_list[:10])
     
+    def find_most_played_role(self, riot_id: str):
+        name, tag = riot_id.split('#')
+        url = "https://mobalytics.gg/api/lol/graphql/v1/query"
+        payload = {"operationName":"LolProfilePageSummonerInfoQuery","variables":{"gameName":f"{name}","tagLine":f"{tag}","region":"NA","sQueue":None,"sRole":None,"sChampion":None},"extensions":{"persistedQuery":{"version":1,"sha256Hash":"69fd82d266137c011d209634e4b09ab5a8c66d415a19676c06aa90b1ba7632fe"}}}
+        res = self.client.post(url=url, json=payload)
+        data: str = json.loads(res.content)['data']['lol']['player']['roleStats']['filters']['actual']['rolename']
+        return data.lower()
+    
     def gen_opgg_link(self, riot_id: str):
         riot_id = riot_id.replace('#','-')
         return f'https://www.op.gg/summoners/na/{riot_id}'
     
     def __champion_ranked_data(self, res:httpx.Response)->httpx.Response:
-        data = json.loads(res.content)['data']['champion_stats']
+        data = json.loads(res.content)['data']
+        if data == []:
+            empty = {
+                "champ_name":"None",
+                "played":"None",
+                "win_rate":"None",
+                "kda":"None",
+                "cspm":"None",
+            }
+            return pd.DataFrame(empty,index=[0])
+        data = data['champion_stats']
         champ_data = []
         for champ in data:
             stats = {
                 "champ_name":champ_ids[str(champ['id'])],
-                "play": champ['play'],
+                "played": champ['play'],
                 "win": champ['win'],
                 "lose": champ['lose'],
                 "kill": champ['kill'],
@@ -101,8 +122,9 @@ class PlayerData:
                 "neutral_minion_kill":champ['neutral_minion_kill'],
                 "game_length_seconds":champ['game_length_second']
             }
-            stats['win_rate'] = (stats['win'] / stats['play'])*100
-            stats['cspm'] = (stats['minion_kills']+stats['neutral_minion_kill']) / (stats['game_length_seconds']/60)
+            stats['win_rate'] = round((stats['win'] / stats['played'])*100)
+            stats['kda'] = round((stats['kill']+stats['assist']) / (1 if stats['death'] == 0 else stats['death']),2)
+            stats['cspm'] = round((stats['minion_kills']+stats['neutral_minion_kill']) / (stats['game_length_seconds']/60),1)
             champ_data.append(stats)
         champ_data = pd.DataFrame.from_dict(champ_data[:10])
         return champ_data
@@ -165,7 +187,7 @@ champ_ids = {
     "59": "JarvanIV",
     "60": "Elise",
     "61": "Orianna",
-    "62": "MonkeyKing",
+    "62": "Wukong",
     "63": "Brand",
     "64": "LeeSin",
     "67": "Vayne",
