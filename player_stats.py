@@ -46,11 +46,11 @@ class PlayerData:
         return summoner_id
     
     def solo_champ_pool(self, summoner_id: str):
-        res = self.client.get(f'https://lol-web-api.op.gg/api/v1.0/internal/bypass/summoners/na/{summoner_id}/most-champions/rank?game_type=SOLORANKED&season_id=25')
+        res = self.client.get(f'https://lol-web-api.op.gg/api/v1.0/internal/bypass/summoners/na/{summoner_id}/most-champions/rank?game_type=SOLORANKED&season_id=27')
         return self.__champion_ranked_data(res)
     
     def flex_champ_pool(self, summoner_id:str):
-        res = self.client.get(f'https://lol-web-api.op.gg/api/v1.0/internal/bypass/summoners/na/{summoner_id}/most-champions/rank?game_type=FLEXRANKED&season_id=25')
+        res = self.client.get(f'https://lol-web-api.op.gg/api/v1.0/internal/bypass/summoners/na/{summoner_id}/most-champions/rank?game_type=FLEXRANKED&season_id=27')
         return self.__champion_ranked_data(res)
         
     def player_rank_info(self, riot_id:str):
