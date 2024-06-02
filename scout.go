@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"unicode"
+	"sync"
 
 	"github.com/PuerkitoBio/goquery"
 )
@@ -21,15 +23,55 @@ func check(e error) {
 	}
 }
 
+
+/*
+	functions to conver special characters to utf-8 codes
+	specifically for championmastery.gg urls
+*/
+func spec_to_utf(text string) string{
+	if text == " " {
+		return "+"
+	}
+	utf8_byte := []byte(text)
+
+	var encoded_string string
+	for _, b := range(utf8_byte){
+		encoded_string += fmt.Sprintf("%%%02X", b)
+	}
+	return encoded_string
+}
+
+func is_special(r rune) bool{
+	if unicode.IsNumber(r) || unicode.IsDigit(r) || r == '%'{
+		return false
+	}
+	return !unicode.IsLetter(r) || (unicode.IsLetter(r) && !(r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z'))
+}
+
+func mastery_url(riot_id string) string{
+	var converted string
+	for _, c := range(riot_id){
+		check := is_special(c)
+		if check{
+			converted += spec_to_utf(string(c))
+		} else {
+			converted += string(c)
+		}
+	}
+	return converted
+}
+
+// ###############################################################
+
 type Player struct {
-	username         string 
-	summoner_id      string 
-	rank             Rank   
-	most_played_role string 
+	username         string
+	summoner_id      string
+	rank             Rank
+	most_played_role string
 	solo_champs      []Champion
 	flex_champs      []Champion
-	champion_mastery [10]Mastery 
-	opgg_link        string      
+	champion_mastery [10]Mastery
+	opgg_link        string
 }
 
 type Champion struct {
@@ -74,7 +116,7 @@ func get_build_id(client *http.Client) (string, error) {
 }
 
 /*
-Func group: Player information
+	Func group: Player information
 */
 func create_opgg_url(riot_id string) string {
 	riot_id2 := strings.ReplaceAll(riot_id, "#", "-")
@@ -115,6 +157,15 @@ func player_info(client *http.Client, build_id string, riot_id string) (map[stri
 
 func extract_rank_data(data map[string]interface{}) Rank {
 	player_data := data["league_stats"].([]interface{})[0].(map[string]interface{})
+	if player_data["tier_info"].(map[string]interface{})["tier"] == nil {
+		return Rank{
+			tier:         "UNRANKED",
+			division:     0,
+			lp:           0,
+			games_played: 0,
+			win_rate:     0,
+		}
+	}
 	tier := player_data["tier_info"].(map[string]interface{})["tier"].(string)
 	division := int(player_data["tier_info"].(map[string]interface{})["division"].(float64))
 	lp := int(player_data["tier_info"].(map[string]interface{})["lp"].(float64))
@@ -157,10 +208,10 @@ func get_most_played_role(client *http.Client, riot_id string) (string, error) {
 	return role, nil
 }
 
-///////////////////////////////////////////////////////////////////////////////
+// ########################################################################
 
 /*
-Func group: Champion data
+	Func group: Champion data
 */
 const season int = 27
 
@@ -235,12 +286,13 @@ func champ_data(resp *http.Response) ([]Champion, error) {
 	return champs, nil
 }
 
-///////////////////////////////////////////////////////////////////////////////
+// ###############################################################
 
 func champion_masteries(client *http.Client, riot_id string) ([10]Mastery, error) {
 	riot_id2 := strings.ReplaceAll(riot_id, "#", "%23")
 	riot_id3 := strings.ReplaceAll(riot_id2, "-", "%23")
-	resp, err := client.Get(fmt.Sprintf("https://championmastery.gg/player?riotId=%s&region=NA&lang=en_US", riot_id3))
+	riot_id4 := mastery_url(riot_id3)
+	resp, err := client.Get(fmt.Sprintf("https://championmastery.gg/player?riotId=%s&region=NA&lang=en_US", riot_id4))
 	if err != nil {
 		return [10]Mastery{}, err
 	}
@@ -272,12 +324,11 @@ func champion_masteries(client *http.Client, riot_id string) ([10]Mastery, error
 }
 
 // Player struct generator
-func newPlayer(client *http.Client, build_id string, riot_id string) *Player {
+func newPlayer(client *http.Client, build_id string, riot_id string, ch chan Player, wg *sync.WaitGroup) {
+	defer wg.Done()
+	fmt.Printf("Gathering stats for: %s\n", riot_id)
 	player_data, err := player_info(client, build_id, riot_id)
-	if err != nil {
-		log.Fatalf("Player: %s ; not found", riot_id)
-		return &Player{username: "None"}
-	}
+	check(err)
 	rank_info := extract_rank_data(player_data)
 	summoner_id := extract_summoner_id(player_data)
 	opgg_url := create_opgg_url(riot_id)
@@ -289,7 +340,7 @@ func newPlayer(client *http.Client, build_id string, riot_id string) *Player {
 	check(err)
 	flex_champs, err := flex_champ_pool(client, summoner_id)
 	check(err)
-	return &Player{
+	ch <- Player{
 		username:         riot_id,
 		summoner_id:      summoner_id,
 		rank:             rank_info,
@@ -299,6 +350,7 @@ func newPlayer(client *http.Client, build_id string, riot_id string) *Player {
 		champion_mastery: mastery,
 		opgg_link:        opgg_url,
 	}
+	fmt.Printf("Finished: %s\n", riot_id)
 }
 
 // converts op.gg multi search link into a []string of usernames
@@ -321,13 +373,32 @@ func op_to_names(url_s string) []string {
 
 func main() {
 	client := &http.Client{}
+	var wg sync.WaitGroup
+	playerChan := make(chan Player)
 	build_id, err := get_build_id(client)
 	check(err)
-	multi_url := "https://www.op.gg/multisearch/na?summoners=lisk%23lisk%2C%20tinytibbz%23tibbz"
+	var team_name string
+	fmt.Print("Enter the team name: ")
+	fmt.Scan(&team_name)
+	var multi_url string
+	fmt.Print("Enter the op.gg multi link: ")
+	fmt.Scan(&multi_url)
 	p_list := op_to_names(multi_url)
 	for _, v := range p_list {
-		fmt.Println(v)
-		p := newPlayer(client, build_id, v)
+		wg.Add(1)
+		go newPlayer(client, build_id, v, playerChan, &wg)
+	}
+	go func() {
+		wg.Wait()
+		close(playerChan)
+	}()
+	var players []Player
+	for v := range playerChan {
+		players = append(players, v)
+	}
+	fmt.Printf("\n\n\n")
+
+	for _, p := range players {
 		fmt.Printf("username: %s\nsum_id: %s\nop.gg link: %s\n", p.username, p.summoner_id, p.opgg_link)
 		fmt.Printf("role: %s\n", p.most_played_role)
 		fmt.Printf("rank info\n---------\nrank: %s %v\nLP: %v\nwin rate: %v%% \ngames played: %v\n", p.rank.tier, p.rank.division, p.rank.lp, p.rank.win_rate, p.rank.games_played)
@@ -335,13 +406,16 @@ func main() {
 			fmt.Printf("idx: %v, name: %s, level: %s, points: %v\n\n", i+1, v.name, v.level, v.points)
 		}
 		for _, v := range p.solo_champs {
-			fmt.Printf("name: %s, gp: %v,win rate: %v, kda: %v, cspm: %v\n\n", v.name, v.games_played, v.win_rate, v.kda, v.cspm)
+			fmt.Printf("name: %s, gp: %v, win rate: %.0f%%, kda: %.2f, cspm: %.1f\n\n", v.name, v.games_played, v.win_rate, v.kda, v.cspm)
 		}
 		for _, v := range p.flex_champs {
-			fmt.Printf("name: %s, gp: %v,win rate: %v.0f, kda: %v.2f, cspm: %v.1f\n\n", v.name, v.games_played, v.win_rate, v.kda, v.cspm)
+			fmt.Printf("name: %s, gp: %v, win rate: %.0f%%, kda: %.2f, cspm: %.1f\n\n", v.name, v.games_played, v.win_rate, v.kda, v.cspm)
 		}
 		fmt.Print("\n\n")
 	}
+
+	// multi_url := "https://www.op.gg/multisearch/na?summoners=lisk%23lisk%2C%20tinytibbz%23tibbz"
+	// p_list := op_to_names(multi_url)
 }
 
 var champ_ids map[int]string = map[int]string{
