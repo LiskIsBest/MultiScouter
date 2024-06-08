@@ -477,7 +477,7 @@ func main() {
 		table_string3 := &strings.Builder{}
 		table3 := tablewriter.NewWriter(table_string3)
 		table3.SetHeader([]string{"name", "games", "WR%", "KDA", "CSPM"})
-		for _, v := range p.solo_champs {
+		for _, v := range p.flex_champs {
 			table3.Append([]string{v.name, fmt.Sprint(v.games_played), fmt.Sprintf("%v%%", v.win_rate), fmt.Sprintf("%.2f", v.kda), fmt.Sprintf("%.2f", v.cspm)})
 		}
 		table3.SetColumnAlignment([]int{0, 0, 2, 0, 0})
