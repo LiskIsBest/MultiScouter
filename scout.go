@@ -487,6 +487,8 @@ func main() {
 		w.WriteString("\n")
 	}
 	w.Flush()
+	fmt.Println("Press Enter...")
+	fmt.Scanln()
 }
 
 var champ_ids map[int]string = map[int]string{
