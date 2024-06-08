@@ -12,11 +12,13 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"unicode"
 
 	"github.com/PuerkitoBio/goquery"
+	"github.com/olekukonko/tablewriter"
 )
 
 func check(e error) {
@@ -25,36 +27,43 @@ func check(e error) {
 	}
 }
 
+// Define a custom type for sorting items by Value
+type ByValue []Player
+
+// Implement the sort.Interface for ByValue
+func (a ByValue) Len() int           { return len(a) }
+func (a ByValue) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a ByValue) Less(i, j int) bool { return a[i].role_id < a[j].role_id }
 
 /*
-	functions to conver special characters to utf-8 codes
-	specifically for championmastery.gg urls
+functions to conver special characters to utf-8 codes
+specifically for championmastery.gg urls
 */
-func spec_to_utf(text string) string{
+func spec_to_utf(text string) string {
 	if text == " " {
 		return "+"
 	}
 	utf8_byte := []byte(text)
 
 	var encoded_string string
-	for _, b := range(utf8_byte){
+	for _, b := range utf8_byte {
 		encoded_string += fmt.Sprintf("%%%02X", b)
 	}
 	return encoded_string
 }
 
-func is_special(r rune) bool{
-	if unicode.IsNumber(r) || unicode.IsDigit(r) || r == '%'{
+func is_special(r rune) bool {
+	if unicode.IsNumber(r) || unicode.IsDigit(r) || r == '%' {
 		return false
 	}
 	return !unicode.IsLetter(r) || (unicode.IsLetter(r) && !(r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z'))
 }
 
-func mastery_url(riot_id string) string{
+func mastery_url(riot_id string) string {
 	var converted string
-	for _, c := range(riot_id){
+	for _, c := range riot_id {
 		check := is_special(c)
-		if check{
+		if check {
 			converted += spec_to_utf(string(c))
 		} else {
 			converted += string(c)
@@ -70,6 +79,7 @@ type Player struct {
 	summoner_id      string
 	rank             Rank
 	most_played_role string
+	role_id          int
 	solo_champs      []Champion
 	flex_champs      []Champion
 	champion_mastery [10]Mastery
@@ -111,24 +121,24 @@ func get_build_id(client *http.Client) (string, error) {
 		return "", err
 	}
 	data := doc.Find("#__NEXT_DATA__").Text()
-	var jsonMap map[string]interface{}
-	json.Unmarshal([]byte(data), &jsonMap)
-	build_id := jsonMap["buildId"].(string)
+	var json_map map[string]interface{}
+	json.Unmarshal([]byte(data), &json_map)
+	build_id := json_map["buildId"].(string)
 	return build_id, nil
 }
 
 /*
-	Func group: Player information
+Func group: Player information
 */
 func create_opgg_url(riot_id string) string {
-	riot_id2 := strings.ReplaceAll(riot_id, "#", "-")
-	return fmt.Sprintf("https://www.op.gg/summoners/na/%s", riot_id2)
+	riot_id = strings.ReplaceAll(riot_id, "#", "-")
+	return fmt.Sprintf("https://www.op.gg/summoners/na/%s", riot_id)
 }
 
 func player_info(client *http.Client, build_id string, riot_id string) (map[string]interface{}, error) {
-	riot_id2 := strings.ReplaceAll(riot_id, "#", "-")
-	riot_id3 := strings.ReplaceAll(riot_id2, " ", "+")
-	op_url := fmt.Sprintf("https://www.op.gg/_next/data/%s/en_US/summoners/na/%s/champions.json?region=na&summoner=%s", build_id, riot_id3, riot_id3)
+	riot_id = strings.ReplaceAll(riot_id, "#", "-")
+	riot_id = strings.ReplaceAll(riot_id, " ", "+")
+	op_url := fmt.Sprintf("https://www.op.gg/_next/data/%s/en_US/summoners/na/%s/champions.json?region=na&summoner=%s", build_id, riot_id, riot_id)
 	resp, err := client.Get(op_url)
 	if err != nil {
 		return map[string]interface{}{}, err
@@ -138,12 +148,12 @@ func player_info(client *http.Client, build_id string, riot_id string) (map[stri
 	if err != nil {
 		return map[string]interface{}{}, err
 	}
-	var jsonMap map[string]interface{}
-	json.Unmarshal([]byte(body), &jsonMap)
-	if _, ok := jsonMap["pageProps"].(map[string]interface{})["error"]; !ok {
+	var json_map map[string]interface{}
+	json.Unmarshal([]byte(body), &json_map)
+	if _, ok := json_map["pageProps"].(map[string]interface{})["error"]; !ok {
 		return map[string]interface{}{}, errors.New("player not found")
 	}
-	data := jsonMap["pageProps"].(map[string]interface{})["data"].(map[string]interface{})
+	data := json_map["pageProps"].(map[string]interface{})["data"].(map[string]interface{})
 	sum_id := data["summoner_id"].(string)
 	ren_url := fmt.Sprintf("https://lol-web-api.op.gg/api/v1.0/internal/bypass/summoners/na/%s/renewal", sum_id)
 	req, err := http.NewRequest("POST", ren_url, nil)
@@ -189,9 +199,9 @@ func extract_summoner_id(data map[string]interface{}) string {
 }
 
 func get_most_played_role(client *http.Client, riot_id string) (string, error) {
-	rid := strings.Split(riot_id, "#")
-	jsonStr := []byte(fmt.Sprintf(`{"operationName":"LolProfilePageSummonerInfoQuery","variables":{"gameName":"%s","tagLine":"%s","region":"NA","sQueue":null,"sRole":null,"sChampion":null},"extensions":{"persistedQuery":{"version":1,"sha256Hash":"69fd82d266137c011d209634e4b09ab5a8c66d415a19676c06aa90b1ba7632fe"}}}`, rid[0], rid[1]))
-	req, err := http.NewRequest("POST", "https://mobalytics.gg/api/lol/graphql/v1/query", bytes.NewBuffer(jsonStr))
+	riot_id_list := strings.Split(riot_id, "#")
+	json_str := []byte(fmt.Sprintf(`{"operationName":"LolProfilePageSummonerInfoQuery","variables":{"gameName":"%s","tagLine":"%s","region":"NA","sQueue":null,"sRole":null,"sChampion":null},"extensions":{"persistedQuery":{"version":1,"sha256Hash":"69fd82d266137c011d209634e4b09ab5a8c66d415a19676c06aa90b1ba7632fe"}}}`, riot_id_list[0], riot_id_list[1]))
+	req, err := http.NewRequest("POST", "https://mobalytics.gg/api/lol/graphql/v1/query", bytes.NewBuffer(json_str))
 	if err != nil {
 		return "", err
 	}
@@ -205,16 +215,16 @@ func get_most_played_role(client *http.Client, riot_id string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	var jsonMap map[string]interface{}
-	json.Unmarshal([]byte(body), &jsonMap)
-	role := jsonMap["data"].(map[string]interface{})["lol"].(map[string]interface{})["player"].(map[string]interface{})["roleStats"].(map[string]interface{})["filters"].(map[string]interface{})["actual"].(map[string]interface{})["rolename"].(string)
+	var json_map map[string]interface{}
+	json.Unmarshal([]byte(body), &json_map)
+	role := json_map["data"].(map[string]interface{})["lol"].(map[string]interface{})["player"].(map[string]interface{})["roleStats"].(map[string]interface{})["filters"].(map[string]interface{})["actual"].(map[string]interface{})["rolename"].(string)
 	return role, nil
 }
 
 // ########################################################################
 
 /*
-	Func group: Champion data
+Func group: Champion data
 */
 const season int = 27
 
@@ -249,12 +259,12 @@ func champ_data(resp *http.Response) ([]Champion, error) {
 	if err != nil {
 		return []Champion{}, err
 	}
-	var jsonMap map[string]interface{}
-	json.Unmarshal([]byte(body), &jsonMap)
-	if _, ok := jsonMap["data"].([]interface{}); ok {
+	var json_map map[string]interface{}
+	json.Unmarshal([]byte(body), &json_map)
+	if _, ok := json_map["data"].([]interface{}); ok {
 		return []Champion{}, nil
 	}
-	data := jsonMap["data"].(map[string]interface{})["champion_stats"].([]interface{})
+	data := json_map["data"].(map[string]interface{})["champion_stats"].([]interface{})
 	var champs []Champion
 	champ_count := len(data)
 	if champ_count > 10 {
@@ -292,10 +302,10 @@ func champ_data(resp *http.Response) ([]Champion, error) {
 // ###############################################################
 
 func champion_masteries(client *http.Client, riot_id string) ([10]Mastery, error) {
-	riot_id2 := strings.ReplaceAll(riot_id, "#", "%23")
-	riot_id3 := strings.ReplaceAll(riot_id2, "-", "%23")
-	riot_id4 := mastery_url(riot_id3)
-	resp, err := client.Get(fmt.Sprintf("https://championmastery.gg/player?riotId=%s&region=NA&lang=en_US", riot_id4))
+	riot_id = strings.ReplaceAll(riot_id, "#", "%23")
+	riot_id = strings.ReplaceAll(riot_id, "-", "%23")
+	riot_id = mastery_url(riot_id)
+	resp, err := client.Get(fmt.Sprintf("https://championmastery.gg/player?riotId=%s&region=NA&lang=en_US", riot_id))
 	if err != nil {
 		return [10]Mastery{}, err
 	}
@@ -327,7 +337,7 @@ func champion_masteries(client *http.Client, riot_id string) ([10]Mastery, error
 }
 
 // Player struct generator
-func newPlayer(client *http.Client, build_id string, riot_id string, ch chan Player, wg *sync.WaitGroup) {
+func new_player(client *http.Client, build_id string, riot_id string, ch chan Player, wg *sync.WaitGroup) {
 	defer wg.Done()
 	fmt.Printf("Gathering stats for: %s\n", riot_id)
 	player_data, err := player_info(client, build_id, riot_id)
@@ -337,6 +347,19 @@ func newPlayer(client *http.Client, build_id string, riot_id string, ch chan Pla
 	opgg_url := create_opgg_url(riot_id)
 	most_played_role, err := get_most_played_role(client, riot_id)
 	check(err)
+	var role_id int
+	switch most_played_role {
+	case "TOP":
+		role_id = 1
+	case "JUNGLE":
+		role_id = 2
+	case "MID":
+		role_id = 3
+	case "ADC":
+		role_id = 4
+	case "SUPPORT":
+		role_id = 5
+	}
 	mastery, err := champion_masteries(client, riot_id)
 	check(err)
 	solo_champs, err := solo_champ_pool(client, summoner_id)
@@ -348,6 +371,7 @@ func newPlayer(client *http.Client, build_id string, riot_id string, ch chan Pla
 		summoner_id:      summoner_id,
 		rank:             rank_info,
 		most_played_role: most_played_role,
+		role_id:          role_id,
 		solo_champs:      solo_champs,
 		flex_champs:      flex_champs,
 		champion_mastery: mastery,
@@ -375,60 +399,91 @@ func op_to_names(url_s string) []string {
 }
 
 func main() {
+	reader := bufio.NewReader(os.Stdin)
+
 	client := &http.Client{}
 	var wg sync.WaitGroup
-	playerChan := make(chan Player)
+	player_chan := make(chan Player)
 	build_id, err := get_build_id(client)
 	check(err)
-	var team_name string
+
 	fmt.Print("Enter the team name: ")
-	fmt.Scan(&team_name)
-	var multi_url string
+	team_name, err := reader.ReadString('\n')
+	check(err)
+	team_name = strings.TrimSpace(team_name)
+	team_name = strings.ReplaceAll(team_name, " ", "_")
+
 	fmt.Print("Enter the op.gg multi link: ")
-	fmt.Scan(&multi_url)
+	multi_url, err := reader.ReadString('\n')
+	check(err)
+	multi_url = strings.TrimSpace(multi_url)
 	p_list := op_to_names(multi_url)
+
 	for _, v := range p_list {
 		wg.Add(1)
-		go newPlayer(client, build_id, v, playerChan, &wg)
+		go new_player(client, build_id, v, player_chan, &wg)
 	}
 	go func() {
 		wg.Wait()
-		close(playerChan)
+		close(player_chan)
 	}()
 	var players []Player
-	for v := range playerChan {
+	for v := range player_chan {
 		players = append(players, v)
 	}
 	fmt.Printf("\n\n\n")
 
-	f, err := os.Create(fmt.Sprintf("team_%s.txt",team_name))
-	if err != nil{
+	f, err := os.Create(fmt.Sprintf("team_%s.txt", team_name))
+	if err != nil {
 		check(err)
 	}
 	defer f.Close()
 
 	w := bufio.NewWriter(f)
-	_, err = w.WriteString(fmt.Sprintf("Team: %s\n\n",team_name))
+	_, err = w.WriteString(fmt.Sprintf("Team: %s\n\n", team_name))
 	if err != nil {
 		check(err)
 	}
+	sort.Sort(ByValue(players))
 	for _, p := range players {
 		w.WriteString("----------------------------------------\n")
 		w.WriteString(fmt.Sprintf("username: %s\nop.gg link: %s\n", p.username, p.opgg_link))
 		w.WriteString(fmt.Sprintf("most played role: %s\n", p.most_played_role))
-		w.WriteString(fmt.Sprintf("rank info\n---------\nrank: %s %v\nLP: %v\nwin rate: %v%% \ngames played: %v\n\n", p.rank.tier, p.rank.division, p.rank.lp, p.rank.win_rate, p.rank.games_played))
+		w.WriteString(fmt.Sprintf("rank: %s %v %vLP\nwin rate: %v%% \ngames played: %v\n\n", p.rank.tier, p.rank.division, p.rank.lp, p.rank.win_rate, p.rank.games_played))
+
 		w.WriteString(fmt.Sprintln("Champion Mastery:"))
-		for i, v := range p.champion_mastery {
-			w.WriteString(fmt.Sprintf("idx: %v, name: %s, level: %s, points: %v\n\n", i+1, v.name, v.level, v.points))
+
+		table_string1 := &strings.Builder{}
+		table1 := tablewriter.NewWriter(table_string1)
+		table1.SetHeader([]string{"name", "level", "points"})
+		for _, v := range p.champion_mastery {
+			table1.Append([]string{v.name, v.level, v.points})
 		}
+		table1.Render()
+		w.WriteString(table_string1.String())
+
 		w.WriteString("Solo queue:\n")
+		table_string2 := &strings.Builder{}
+		table2 := tablewriter.NewWriter(table_string2)
+		table2.SetHeader([]string{"name", "games", "WR%", "KDA", "CSPM"})
 		for _, v := range p.solo_champs {
-			w.WriteString(fmt.Sprintf("name: %s, gp: %v, win rate: %.0f%%, kda: %.2f, cspm: %.1f\n\n", v.name, v.games_played, v.win_rate, v.kda, v.cspm))
+			table2.Append([]string{v.name, fmt.Sprint(v.games_played), fmt.Sprintf("%v%%", v.win_rate), fmt.Sprintf("%.2f", v.kda), fmt.Sprintf("%.2f", v.cspm)})
 		}
+		table2.SetColumnAlignment([]int{0, 0, 2, 0, 0})
+		table2.Render()
+		w.WriteString(table_string2.String())
+
 		w.WriteString("Flex queue:\n")
-		for _, v := range p.flex_champs {
-			w.WriteString(fmt.Sprintf("name: %s, gp: %v, win rate: %.0f%%, kda: %.2f, cspm: %.1f\n\n", v.name, v.games_played, v.win_rate, v.kda, v.cspm))
+		table_string3 := &strings.Builder{}
+		table3 := tablewriter.NewWriter(table_string3)
+		table3.SetHeader([]string{"name", "games", "WR%", "KDA", "CSPM"})
+		for _, v := range p.solo_champs {
+			table3.Append([]string{v.name, fmt.Sprint(v.games_played), fmt.Sprintf("%v%%", v.win_rate), fmt.Sprintf("%.2f", v.kda), fmt.Sprintf("%.2f", v.cspm)})
 		}
+		table3.SetColumnAlignment([]int{0, 0, 2, 0, 0})
+		table3.Render()
+		w.WriteString(table_string3.String())
+
 		w.WriteString("\n")
 	}
 	w.Flush()
